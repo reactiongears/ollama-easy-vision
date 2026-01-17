@@ -1,4 +1,4 @@
-# MiniMax Easy Vision
+# Opencode MiniMax Easy Vision
 
 MiniMax Easy Vision is a plugin for [OpenCode](https://opencode.ai) that enables **vision support** when using [MiniMax](https://www.minimax.io/) models. It restores a simple “paste and ask” workflow by automatically handling image assets and routing them through the [MiniMax Coding Plan MCP](https://github.com/MiniMax-AI/MiniMax-Coding-Plan-MCP)
 
