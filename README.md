@@ -45,8 +45,6 @@ Examples:
 * `minimax/minimax-m2.1`
 * `minimax/abab6.5s-chat`
 
-Non-MiniMax models are not affected. Their native vision support continues to work normally.
-
 ## Supported Image Formats
 
 * PNG
