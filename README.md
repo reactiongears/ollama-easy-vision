@@ -139,7 +139,7 @@ The built plugin will be available at `dist/index.js`.
 
 ## License
 
-GPL-3.0. See `LICENSE.md` for details.
+GPL-3.0. See [LICENSE.md](./LICENCE.md) for details.
 
 ## References
 
