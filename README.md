@@ -53,7 +53,7 @@ Non-MiniMax models are not affected. Their native vision support continues to wo
 * JPEG
 * WebP
 
-These formats match the constraints of the MiniMax Coding Plan MCP `understand_image` tool.
+-*(These formats are dictated by the limitations of the [MiniMax Coding Plan MCP](https://github.com/MiniMax-AI/MiniMax-Coding-Plan-MCP) `understand_image` tool.)*
 
 ## Installation
 
@@ -130,14 +130,6 @@ Model: I'll analyze the screenshot using the understand_image tool.
 Model: The error message indicates a "TypeError: Cannot read property 'foo' of undefined"...
 ```
 
-## Limitations
-
-* Uses `experimental.chat.messages.transform`, which may change in future OpenCode versions
-* Images persist until the OS clears the temporary directory
-* Only JPEG, PNG, and WebP are supported
-* The MCP server must have access to the local filesystem
-* Animated GIFs and unsupported formats are skipped
-
 ## Development
 
 ```bash
@@ -153,8 +145,8 @@ GPL-3.0. See `LICENSE.md` for details.
 
 ## References
 
-* [https://opencode.ai](https://opencode.ai)
-* [https://opencode.ai/docs/plugins/](https://opencode.ai/docs/plugins/)
-* [https://www.minimax.io/](https://www.minimax.io/)
-* [https://github.com/MiniMax-AI/MiniMax-Coding-Plan-MCP](https://github.com/MiniMax-AI/MiniMax-Coding-Plan-MCP)
-* [https://platform.minimax.io/docs/guides/coding-plan-mcp-guide](https://platform.minimax.io/docs/guides/coding-plan-mcp-guide)
+* [OpenCode Official Website](https://opencode.ai)
+* [OpenCode Plugins Documentation](https://opencode.ai/docs/plugins/)
+* [MiniMax Official Website](https://www.minimax.io/)
+* [MiniMax Coding Plan MCP Repository](https://github.com/MiniMax-AI/MiniMax-Coding-Plan-MCP)
+* [MiniMax API Documentation](https://platform.minimax.io/docs/guides/coding-plan-mcp-guide)
