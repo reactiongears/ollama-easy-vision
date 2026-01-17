@@ -53,7 +53,7 @@ Non-MiniMax models are not affected. Their native vision support continues to wo
 * JPEG
 * WebP
 
--*(These formats are dictated by the limitations of the [MiniMax Coding Plan MCP](https://github.com/MiniMax-AI/MiniMax-Coding-Plan-MCP) `understand_image` tool.)*
+*(These formats are dictated by the limitations of the [MiniMax Coding Plan MCP](https://github.com/MiniMax-AI/MiniMax-Coding-Plan-MCP) `understand_image` tool.)*
 
 ## Installation
 
