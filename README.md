@@ -171,6 +171,7 @@ The MiniMax Coding Plan MCP server must be configured in your `opencode.json`:
 >
 > **Model**: I'll check the image using the `understand_image` tool.
 > `[Calls mcp_minimax_understand_image path="/tmp/xyz.png"]`
+> 
 > **Model**: The error suggests a syntax error on line 12.
 
 ## Development
