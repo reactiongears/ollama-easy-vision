@@ -1,6 +1,10 @@
 # Opencode MiniMax Easy Vision
 
-MiniMax Easy Vision is a plugin for [OpenCode](https://opencode.ai) that enables **vision support** for models that lack native image attachment support. Originally built for [MiniMax](https://www.minimax.io/) models, it can be configured to work with any model that requires MCP-based image handling. It restores a simple "paste and ask" workflow by automatically handling image assets and routing them through the [MiniMax Coding Plan MCP](https://github.com/MiniMax-AI/MiniMax-Coding-Plan-MCP).
+MiniMax Easy Vision is a plugin for [OpenCode](https://opencode.ai) that enables **vision support** for models that lack native image attachment support.
+
+Originally built for [MiniMax](https://www.minimax.io/) models, it can be configured to work with any model that requires MCP-based image handling.
+
+It restores the "paste and ask" workflow by automatically saving image assets and routing them through the [MiniMax Coding Plan MCP](https://github.com/MiniMax-AI/MiniMax-Coding-Plan-MCP)
 
 ## Demo
 
@@ -12,84 +16,75 @@ https://github.com/user-attachments/assets/826f90ea-913f-427e-ace8-0b711302c497
 
 ## The Problem
 
-When using MiniMax models (for example, MiniMax M2.1) inside OpenCode, users run into a limitation: **vision is not supported via native image attachments**.
+When using MiniMax models (like MiniMax M2.1) in OpenCode, native image attachments aren't supported. 
 
-MiniMax models rely on the MiniMax Coding Plan MCP's `understand_image` tool, which requires an explicit file path or URL. This breaks the normal chat workflow:
+These models expect the MiniMax Coding Plan MCP's `understand_image` tool, which requires an explicit file path. This breaks the normal flow:
 
-* **Ignored images**: Images pasted directly into chat are ignored by MiniMax models.
-* **Manual steps**: Users must save screenshots, locate file paths, and reference them manually.
-* **Broken flow**: The "paste and ask" vision workflow available in other models is lost.
+* **Ignored images**: Pasted images are simply ignored by the model.
+* **Manual steps**: You have to save screenshots manually, find the path, and reference it in your prompt.
+* **Broken flow**: The "paste and ask" experience available with Claude or GPT models is lost.
 
 ## What This Plugin Does
 
-This plugin removes that friction by automating the vision pipeline for configured models.
+This plugin automates the vision pipeline so you don't have to think about it.
 
-Internally, it:
+**How it works:**
 
-1. Detects when a configured model is active (MiniMax by default)
-2. Intercepts images pasted into the chat
-3. Saves them to a temporary local directory
-4. Injects the required context so the model can invoke the `understand_image` MCP tool with the correct file path
+1. **Detects** when a configured model is active.
+2. **Intercepts** images pasted into the chat.
+3. **Saves** them to a temporary local directory.
+4. **Injects** the necessary context for the model to invoke the `understand_image` tool with the correct path.
 
-From the user's perspective, pasted images simply work with vision, just like how it works out of the box with other vision-capable models like Claude.
+**Result:** You just paste the image and ask your question. The plugin handles the rest.
 
 ## Supported Models
 
-By default, the plugin activates for MiniMax models, identified by:
+By default, the plugin activates for MiniMax models:
 
 * **Provider ID** containing `minimax`
 * **Model ID** containing `minimax` or `abab`
 
-Examples:
-
+**Examples:**
 * `minimax/minimax-m2.1`
 * `minimax/abab6.5s-chat`
 
 ### Custom Model Configuration
 
-You can configure which models the plugin applies to by creating a config file.
+You can enable this for other models by creating a config file.
 
-#### Config File Locations
-
-The plugin looks for configuration in these locations (in order of priority):
+#### Locations (Priority Order)
 
 1. **Project level**: `.opencode/opencode-minimax-easy-vision.json`
 2. **User level**: `~/.config/opencode/opencode-minimax-easy-vision.json`
 
-Project-level config takes precedence over user-level config.
-
-#### Config File Format
+#### Config Format
 
 ```json
 {
-  "models": ["minimax/*", "glm/*", "openai/gpt-4-vision"]
+  "models": ["minimax/*", "opencode/*", "*/glm-4.7-free"]
 }
 ```
 
 #### Pattern Syntax
 
-Model patterns use a `provider/model` format with wildcard support:
-
-| Pattern        | Description                                         |
-| -------------- | --------------------------------------------------- |
-| `*`            | Match ALL models (global wildcard)                  |
-| `minimax/*`    | Match all models from the `minimax` provider        |
-| `*/glm-4v`     | Match `glm-4v` model from any provider              |
-| `openai/gpt-4` | Exact match for provider and model                  |
-| `*/abab*`      | Match any model containing `abab` from any provider |
+| Pattern          | Matches                                 |
+| ---------------- | --------------------------------------- |
+| `*`              | Match ALL models                        |
+| `minimax/*`      | All models from the `minimax` provider  |
+| `*/glm-4.7-free` | Specific model from any provider        |
+| `opencode/*`     | All models from the `opencode` provider |
+| `*/abab*`        | Any model containing `abab`             |
 
 #### Wildcard Rules
 
-* `*` at the start matches any prefix: `*suffix` matches values ending with `suffix`
-* `*` at the end matches any suffix: `prefix*` matches values starting with `prefix`
-* `*` alone matches everything
+* `*suffix` matches values ending with `suffix`
+* `prefix*` matches values starting with `prefix`
+* `*` matches everything
 * `*text*` matches values containing `text`
 
-#### Precedence
+If the config is missing or empty, it defaults to MiniMax-only behavior.
 
-When multiple patterns are specified, the first matching pattern wins. If the `models` array is empty or the config file doesn't exist, the plugin falls back to default MiniMax-only behavior.
-
-#### Examples
+#### Configuration Examples
 
 **Enable for all models:**
 
@@ -99,19 +94,19 @@ When multiple patterns are specified, the first matching pattern wins. If the `m
 }
 ```
 
-**Enable for specific providers:**
+**Specific providers:**
 
 ```json
 {
-  "models": ["minimax/*", "glm/*", "zhipu/*"]
+  "models": ["minimax/*", "opencode/*", "google/*"]
 }
 ```
 
-**Mix of providers and specific models:**
+**Mix of providers and models:**
 
 ```json
 {
-  "models": ["minimax/*", "openai/gpt-4-vision", "*/claude-3*"]
+  "models": ["minimax/*", "opencode/gpt-5-nano", "*/claude-3-7-sonnet*"]
 }
 ```
 
@@ -121,13 +116,13 @@ When multiple patterns are specified, the first matching pattern wins. If the `m
 * JPEG
 * WebP
 
-*(These formats are dictated by the limitations of the [MiniMax Coding Plan MCP](https://github.com/MiniMax-AI/MiniMax-Coding-Plan-MCP) `understand_image` tool.)*
+*(Limited by the [MiniMax Coding Plan MCP](https://github.com/MiniMax-AI/MiniMax-Coding-Plan-MCP) `understand_image` tool.)*
 
 ## Installation
 
 ### Via npm
 
-Add the plugin to the `plugin` array in your `opencode.json` file:
+Just add the plugin to the `plugin` array in your `opencode.json` file:
 
 ```json
 {
@@ -136,23 +131,18 @@ Add the plugin to the `plugin` array in your `opencode.json` file:
 }
 ```
 
-### From local source
+### From Local Source
 
-1. Clone or download this repository
+1. Clone the repository.
 2. Build the plugin:
-
    ```bash
-   npm install
-   npm run build
+   npm install && npm run build
    ```
-3. Copy the built file to your OpenCode plugin directory:
-
-   * Project-level: `.opencode/plugin/minimax-easy-vision.js`
-   * Global: `~/.config/opencode/plugin/minimax-easy-vision.js`
+3. Copy the built `dist/index.js` into your OpenCode plugin directory.
 
 ## Prerequisites
 
-The MiniMax Coding Plan MCP server must be configured in `opencode.json`:
+The MiniMax Coding Plan MCP server must be configured in your `opencode.json`:
 
 ```json
 {
@@ -169,34 +159,19 @@ The MiniMax Coding Plan MCP server must be configured in `opencode.json`:
 }
 ```
 
-For full setup details, refer to the MiniMax Coding Plan MCP and MiniMax API documentation.
-
 ## Usage
 
-1. Start OpenCode with a supported model (MiniMax by default, or any configured model)
-2. Paste an image into the chat (`Cmd+V` / `Ctrl+V`)
-3. Ask a question about the image
+1. Select a supported model in OpenCode.
+2. Paste an image (`Cmd+V` / `Ctrl+V`).
+3. Ask a question about it, just like how you do for other models with native vision support.
 
-What happens internally:
+### Example Interaction
 
-* The image is saved to `{tmpdir}/opencode-minimax-vision/<uuid>.<ext>`
-* Instructions are injected for the model to use the `understand_image` MCP tool
-* The model performs vision analysis and responds
-
-### Example interaction
-
-```text
-You: [pasted screenshot] What does this error message say?
-
-# Automatically injected:
-# [SYSTEM: Image Attachment Detected]
-# 1 image has been saved to: /tmp/opencode-minimax-vision/abc123.png
-# To analyze this image, use the understand_image MCP tool...
-
-Model: I'll analyze the screenshot using the understand_image tool.
-[Calls mcp_minimax_understand_image with the saved path]
-Model: The error message indicates a "TypeError: Cannot read property 'foo' of undefined"...
-```
+> **You**: [pasted screenshot] Why is this failing?
+>
+> **Model**: I'll check the image using the `understand_image` tool.
+> `[Calls mcp_minimax_understand_image path="/tmp/xyz.png"]`
+> **Model**: The error suggests a syntax error on line 12.
 
 ## Development
 
@@ -205,11 +180,11 @@ npm install
 npm run build
 ```
 
-The built plugin will be available at `dist/index.js`.
+The built plugin will be available at `dist/index.js`
 
 ## License
 
-GPL-3.0. See [LICENSE.md](./LICENCE.md) for details.
+GPL-3.0. See [LICENSE.md](./LICENSE.md)
 
 ## References
 
