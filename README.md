@@ -110,6 +110,25 @@ If the config is missing or empty, it defaults to MiniMax-only behavior.
 }
 ```
 
+### Custom Image Analysis Tool
+
+By default, the plugin uses `mcp_minimax_understand_image` from the MiniMax Coding Plan MCP. You can configure a different MCP tool for image analysis:
+
+```json
+{
+  "models": ["*"],
+  "imageAnalysisTool": "mcp_openrouter_analyze_image"
+}
+```
+
+This allows you to use other MCP servers that provide image analysis capabilities, such as:
+
+* [openrouter-image-mcp](https://github.com/JonathanJude/openrouter-image-mcp) - Uses OpenRouter with GPT-4V, Claude, Gemini
+* [mcp-image-recognition](https://github.com/mario-andreschak/mcp-image-recognition) - Uses Anthropic/OpenAI Vision APIs
+* [Peekaboo](https://github.com/steipete/Peekaboo) - macOS screenshot + AI analysis
+
+The plugin will instruct the model to use the configured tool. The tool should accept an image file path as input.
+
 ## Supported Image Formats
 
 * PNG

@@ -26,9 +26,11 @@ const MIME_TO_EXTENSION: Record<string, string> = {
 
 interface PluginConfig {
   models?: string[];
+  imageAnalysisTool?: string;
 }
 
 const DEFAULT_MODEL_PATTERNS: readonly string[] = ["minimax/*", "*/abab*"];
+const DEFAULT_IMAGE_ANALYSIS_TOOL = "mcp_minimax_understand_image";
 
 let pluginConfig: PluginConfig = {};
 
@@ -51,17 +53,44 @@ async function loadConfigFile(
     const parsed = JSON.parse(content) as unknown;
     if (parsed && typeof parsed === "object" && parsed !== null) {
       const config = parsed as Record<string, unknown>;
+      const result: PluginConfig = {};
+
       if (Array.isArray(config.models)) {
-        const models = config.models.filter(
+        result.models = config.models.filter(
           (m): m is string => typeof m === "string",
         );
-        return { models };
       }
+
+      if (typeof config.imageAnalysisTool === "string") {
+        result.imageAnalysisTool = config.imageAnalysisTool;
+      }
+
+      return result;
     }
     return {};
   } catch {
     return null;
   }
+}
+
+function validateImageAnalysisTool(
+  tool: string | undefined,
+  log: (msg: string) => void,
+): boolean {
+  if (tool === undefined) return true;
+
+  if (typeof tool !== "string" || tool.trim() === "") {
+    log(`ERROR: imageAnalysisTool must be a non-empty string`);
+    return false;
+  }
+
+  // Tool name should be reasonable length
+  if (tool.length > 256) {
+    log(`ERROR: imageAnalysisTool name is too long (max 256 characters)`);
+    return false;
+  }
+
+  return true;
 }
 
 // Config precedence: project > user > defaults
@@ -75,22 +104,40 @@ async function loadPluginConfig(
   const userConfig = await loadConfigFile(userConfigPath);
   const projectConfig = await loadConfigFile(projectConfigPath);
 
+  // Merge configs: project takes precedence over user
+  const mergedConfig: PluginConfig = {};
+
+  // Models: project > user > defaults
   if (projectConfig?.models && projectConfig.models.length > 0) {
-    pluginConfig = projectConfig;
+    mergedConfig.models = projectConfig.models;
     log(
-      `Loaded project config from ${projectConfigPath}: ${projectConfig.models.join(", ")}`,
+      `Loaded models from project config: ${projectConfig.models.join(", ")}`,
     );
   } else if (userConfig?.models && userConfig.models.length > 0) {
-    pluginConfig = userConfig;
-    log(
-      `Loaded user config from ${userConfigPath}: ${userConfig.models.join(", ")}`,
-    );
+    mergedConfig.models = userConfig.models;
+    log(`Loaded models from user config: ${userConfig.models.join(", ")}`);
   } else {
-    pluginConfig = {};
-    log(
-      `No config found, using defaults: ${DEFAULT_MODEL_PATTERNS.join(", ")}`,
-    );
+    log(`Using default models: ${DEFAULT_MODEL_PATTERNS.join(", ")}`);
   }
+
+  // imageAnalysisTool: project > user > default
+  const toolFromProject = projectConfig?.imageAnalysisTool;
+  const toolFromUser = userConfig?.imageAnalysisTool;
+  const configuredTool = toolFromProject ?? toolFromUser;
+
+  if (configuredTool !== undefined) {
+    if (!validateImageAnalysisTool(configuredTool, log)) {
+      log(`Falling back to default tool: ${DEFAULT_IMAGE_ANALYSIS_TOOL}`);
+    } else {
+      mergedConfig.imageAnalysisTool = configuredTool;
+      const source = toolFromProject ? "project" : "user";
+      log(`Using imageAnalysisTool from ${source} config: ${configuredTool}`);
+    }
+  } else {
+    log(`Using default imageAnalysisTool: ${DEFAULT_IMAGE_ANALYSIS_TOOL}`);
+  }
+
+  pluginConfig = mergedConfig;
 }
 
 // Order matters: check *text* before *text or text* to avoid false matches
@@ -172,6 +219,10 @@ function shouldApplyVisionHook(
   return modelMatchesPatterns(model, patterns);
 }
 
+function getImageAnalysisTool(): string {
+  return pluginConfig.imageAnalysisTool ?? DEFAULT_IMAGE_ANALYSIS_TOOL;
+}
+
 function isImageFilePart(part: Part): part is FilePart {
   if (part.type !== "file") return false;
   const filePart = part as FilePart;
@@ -219,6 +270,7 @@ async function saveImageToTemp(data: Buffer, mime: string): Promise<string> {
 function generateInjectionPrompt(
   imagePaths: Array<{ path: string; mime: string }>,
   userText: string,
+  toolName: string,
 ): string {
   if (imagePaths.length === 0) return userText;
 
@@ -230,7 +282,7 @@ function generateInjectionPrompt(
   return `The user has shared ${isSingle ? "an image" : `${imagePaths.length} images`}. The ${isSingle ? "image is" : "images are"} saved at:
 ${imageList}
 
-Use the \`mcp_minimax_understand_image\` tool to analyze ${isSingle ? "this image" : "each image"}. Pass the file path as \`image_source\` and describe what to look for in \`prompt\`.
+Use the \`${toolName}\` tool to analyze ${isSingle ? "this image" : "each image"}.
 
 User's request: ${userText || "(analyze the image)"}`;
 }
@@ -377,6 +429,7 @@ export const MinimaxEasyVisionPlugin: Plugin = async (input) => {
       const transformedText = generateInjectionPrompt(
         savedImages.map((img) => ({ path: img.path, mime: img.mime })),
         userText,
+        getImageAnalysisTool(),
       );
 
       const processedPartIds = new Set(savedImages.map((img) => img.partId));

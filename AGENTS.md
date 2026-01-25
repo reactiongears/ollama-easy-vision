@@ -213,7 +213,17 @@ Project-level config takes precedence over user-level config.
 #### Configuration Interface
 ```typescript
 interface PluginConfig {
-  models?: string[];  // Array of model patterns
+  models?: string[];           // Array of model patterns
+  imageAnalysisTool?: string;  // MCP tool name for image analysis
+}
+```
+
+#### Custom Image Analysis Tool
+By default, the plugin uses `mcp_minimax_understand_image`. Configure a different tool:
+```json
+{
+  "models": ["*"],
+  "imageAnalysisTool": "mcp_openrouter_analyze_image"
 }
 ```
 
