@@ -6,9 +6,15 @@ import { mkdir, writeFile, readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 
+// Constants
+
 const PLUGIN_NAME = "minimax-easy-vision";
 const CONFIG_FILENAME = "opencode-minimax-easy-vision.json";
 const TEMP_DIR_NAME = "opencode-minimax-vision";
+const MAX_TOOL_NAME_LENGTH = 256;
+
+const DEFAULT_MODEL_PATTERNS: readonly string[] = ["minimax/*", "*/abab*"];
+const DEFAULT_IMAGE_ANALYSIS_TOOL = "mcp_minimax_understand_image";
 
 const SUPPORTED_MIME_TYPES = new Set([
   "image/png",
@@ -24,15 +30,31 @@ const MIME_TO_EXTENSION: Record<string, string> = {
   "image/webp": "webp",
 };
 
+// Types
+
 interface PluginConfig {
   models?: string[];
   imageAnalysisTool?: string;
 }
 
-const DEFAULT_MODEL_PATTERNS: readonly string[] = ["minimax/*", "*/abab*"];
-const DEFAULT_IMAGE_ANALYSIS_TOOL = "mcp_minimax_understand_image";
+interface SavedImage {
+  path: string;
+  mime: string;
+  partId: string;
+}
+
+interface ModelInfo {
+  providerID: string;
+  modelID: string;
+}
+
+type Logger = (msg: string) => void;
+
+// Plugin State
 
 let pluginConfig: PluginConfig = {};
+
+// Config: Path Resolution
 
 function getUserConfigPath(): string {
   return join(homedir(), ".config", "opencode", CONFIG_FILENAME);
@@ -42,212 +64,252 @@ function getProjectConfigPath(directory: string): string {
   return join(directory, ".opencode", CONFIG_FILENAME);
 }
 
-async function loadConfigFile(
+// Config: File Parsing
+
+function parseModelsArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const models = value.filter((m): m is string => typeof m === "string");
+  return models.length > 0 ? models : undefined;
+}
+
+function parseImageAnalysisTool(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  if (value.trim() === "") return undefined;
+  if (value.length > MAX_TOOL_NAME_LENGTH) return undefined;
+  return value;
+}
+
+function parseConfigObject(raw: unknown): PluginConfig {
+  if (!raw || typeof raw !== "object") return {};
+
+  const obj = raw as Record<string, unknown>;
+  return {
+    models: parseModelsArray(obj.models),
+    imageAnalysisTool: parseImageAnalysisTool(obj.imageAnalysisTool),
+  };
+}
+
+async function readConfigFile(
   configPath: string,
 ): Promise<PluginConfig | null> {
+  if (!existsSync(configPath)) return null;
+
   try {
-    if (!existsSync(configPath)) {
-      return null;
-    }
     const content = await readFile(configPath, "utf-8");
     const parsed = JSON.parse(content) as unknown;
-    if (parsed && typeof parsed === "object" && parsed !== null) {
-      const config = parsed as Record<string, unknown>;
-      const result: PluginConfig = {};
-
-      if (Array.isArray(config.models)) {
-        result.models = config.models.filter(
-          (m): m is string => typeof m === "string",
-        );
-      }
-
-      if (typeof config.imageAnalysisTool === "string") {
-        result.imageAnalysisTool = config.imageAnalysisTool;
-      }
-
-      return result;
-    }
-    return {};
+    return parseConfigObject(parsed);
   } catch {
     return null;
   }
 }
 
-function validateImageAnalysisTool(
-  tool: string | undefined,
-  log: (msg: string) => void,
-): boolean {
-  if (tool === undefined) return true;
+// Config: Precedence & Merging (project > user > defaults)
 
-  if (typeof tool !== "string" || tool.trim() === "") {
-    log(`ERROR: imageAnalysisTool must be a non-empty string`);
-    return false;
+function selectWithPrecedence<T>(
+  projectValue: T | undefined,
+  userValue: T | undefined,
+  defaultValue: T,
+): { value: T; source: "project" | "user" | "default" } {
+  if (projectValue !== undefined) {
+    return { value: projectValue, source: "project" };
   }
-
-  // Tool name should be reasonable length
-  if (tool.length > 256) {
-    log(`ERROR: imageAnalysisTool name is too long (max 256 characters)`);
-    return false;
+  if (userValue !== undefined) {
+    return { value: userValue, source: "user" };
   }
-
-  return true;
+  return { value: defaultValue, source: "default" };
 }
 
-// Config precedence: project > user > defaults
-async function loadPluginConfig(
-  directory: string,
-  log: (msg: string) => void,
-): Promise<void> {
-  const userConfigPath = getUserConfigPath();
-  const projectConfigPath = getProjectConfigPath(directory);
+async function loadPluginConfig(directory: string, log: Logger): Promise<void> {
+  const userConfig = await readConfigFile(getUserConfigPath());
+  const projectConfig = await readConfigFile(getProjectConfigPath(directory));
 
-  const userConfig = await loadConfigFile(userConfigPath);
-  const projectConfig = await loadConfigFile(projectConfigPath);
-
-  // Merge configs: project takes precedence over user
-  const mergedConfig: PluginConfig = {};
-
-  // Models: project > user > defaults
-  if (projectConfig?.models && projectConfig.models.length > 0) {
-    mergedConfig.models = projectConfig.models;
+  // Resolve models with precedence
+  const modelsResult = selectWithPrecedence(
+    projectConfig?.models,
+    userConfig?.models,
+    undefined,
+  );
+  if (modelsResult.source !== "default") {
     log(
-      `Loaded models from project config: ${projectConfig.models.join(", ")}`,
+      `Loaded models from ${modelsResult.source} config: ${modelsResult.value!.join(", ")}`,
     );
-  } else if (userConfig?.models && userConfig.models.length > 0) {
-    mergedConfig.models = userConfig.models;
-    log(`Loaded models from user config: ${userConfig.models.join(", ")}`);
   } else {
     log(`Using default models: ${DEFAULT_MODEL_PATTERNS.join(", ")}`);
   }
 
-  // imageAnalysisTool: project > user > default
-  const toolFromProject = projectConfig?.imageAnalysisTool;
-  const toolFromUser = userConfig?.imageAnalysisTool;
-  const configuredTool = toolFromProject ?? toolFromUser;
-
-  if (configuredTool !== undefined) {
-    if (!validateImageAnalysisTool(configuredTool, log)) {
-      log(`Falling back to default tool: ${DEFAULT_IMAGE_ANALYSIS_TOOL}`);
-    } else {
-      mergedConfig.imageAnalysisTool = configuredTool;
-      const source = toolFromProject ? "project" : "user";
-      log(`Using imageAnalysisTool from ${source} config: ${configuredTool}`);
-    }
+  // Resolve imageAnalysisTool with precedence
+  const toolResult = selectWithPrecedence(
+    projectConfig?.imageAnalysisTool,
+    userConfig?.imageAnalysisTool,
+    undefined,
+  );
+  if (toolResult.source !== "default") {
+    log(
+      `Using imageAnalysisTool from ${toolResult.source} config: ${toolResult.value}`,
+    );
   } else {
     log(`Using default imageAnalysisTool: ${DEFAULT_IMAGE_ANALYSIS_TOOL}`);
   }
 
-  pluginConfig = mergedConfig;
+  pluginConfig = {
+    models: modelsResult.value,
+    imageAnalysisTool: toolResult.value,
+  };
 }
 
-// Order matters: check *text* before *text or text* to avoid false matches
-function matchesPattern(pattern: string, value: string): boolean {
-  const lowerPattern = pattern.toLowerCase();
-  const lowerValue = value.toLowerCase();
+// Config: Accessors
 
-  if (lowerPattern === "*") {
-    return true;
-  }
-
-  if (
-    lowerPattern.startsWith("*") &&
-    lowerPattern.endsWith("*") &&
-    lowerPattern.length > 2
-  ) {
-    const middle = lowerPattern.slice(1, -1);
-    return lowerValue.includes(middle);
-  }
-
-  if (lowerPattern.endsWith("*")) {
-    const prefix = lowerPattern.slice(0, -1);
-    return lowerValue.startsWith(prefix);
-  }
-
-  if (lowerPattern.startsWith("*")) {
-    const suffix = lowerPattern.slice(1);
-    return lowerValue.endsWith(suffix);
-  }
-
-  return lowerValue === lowerPattern;
-}
-
-// Pattern format: "provider/model" with wildcards. No slash = match against both.
-function modelMatchesPatterns(
-  model: { providerID: string; modelID: string } | undefined,
-  patterns: readonly string[],
-): boolean {
-  if (!model) return false;
-
-  for (const pattern of patterns) {
-    if (pattern === "*") {
-      return true;
-    }
-
-    const slashIndex = pattern.indexOf("/");
-
-    if (slashIndex === -1) {
-      if (matchesPattern(pattern, model.modelID)) {
-        return true;
-      }
-      if (matchesPattern(pattern, model.providerID)) {
-        return true;
-      }
-    } else {
-      const providerPattern = pattern.slice(0, slashIndex);
-      const modelPattern = pattern.slice(slashIndex + 1);
-
-      const providerMatches = matchesPattern(providerPattern, model.providerID);
-      const modelMatches = matchesPattern(modelPattern, model.modelID);
-
-      if (providerMatches && modelMatches) {
-        return true;
-      }
-    }
-  }
-
-  return false;
-}
-
-function shouldApplyVisionHook(
-  model: { providerID: string; modelID: string } | undefined,
-): boolean {
-  const patterns =
-    pluginConfig.models && pluginConfig.models.length > 0
-      ? pluginConfig.models
-      : DEFAULT_MODEL_PATTERNS;
-
-  return modelMatchesPatterns(model, patterns);
+function getConfiguredModels(): readonly string[] {
+  return pluginConfig.models ?? DEFAULT_MODEL_PATTERNS;
 }
 
 function getImageAnalysisTool(): string {
   return pluginConfig.imageAnalysisTool ?? DEFAULT_IMAGE_ANALYSIS_TOOL;
 }
 
+// Pattern Matching (supports wildcards: *, prefix*, *suffix, *contains*)
+
+function matchesWildcardPattern(pattern: string, value: string): boolean {
+  const p = pattern.toLowerCase();
+  const v = value.toLowerCase();
+
+  // Global wildcard
+  if (p === "*") return true;
+
+  // Contains: *text*
+  if (p.startsWith("*") && p.endsWith("*") && p.length > 2) {
+    return v.includes(p.slice(1, -1));
+  }
+
+  // Prefix: text*
+  if (p.endsWith("*")) {
+    return v.startsWith(p.slice(0, -1));
+  }
+
+  // Suffix: *text
+  if (p.startsWith("*")) {
+    return v.endsWith(p.slice(1));
+  }
+
+  // Exact match
+  return v === p;
+}
+
+function matchesSinglePattern(pattern: string, model: ModelInfo): boolean {
+  // Global wildcard matches everything
+  if (pattern === "*") return true;
+
+  const slashIndex = pattern.indexOf("/");
+
+  // No slash: match against both provider and model
+  if (slashIndex === -1) {
+    return (
+      matchesWildcardPattern(pattern, model.modelID) ||
+      matchesWildcardPattern(pattern, model.providerID)
+    );
+  }
+
+  // With slash: match provider/model separately
+  const providerPattern = pattern.slice(0, slashIndex);
+  const modelPattern = pattern.slice(slashIndex + 1);
+
+  return (
+    matchesWildcardPattern(providerPattern, model.providerID) &&
+    matchesWildcardPattern(modelPattern, model.modelID)
+  );
+}
+
+function modelMatchesAnyPattern(model: ModelInfo | undefined): boolean {
+  if (!model) return false;
+
+  const patterns = getConfiguredModels();
+  return patterns.some((pattern) => matchesSinglePattern(pattern, model));
+}
+
+// Type Guards
+//
+// Messages in OpenCode contain "parts" - an array of different content types:
+// - TextPart: The user's typed text
+// - FilePart: Attached files (images, PDFs, etc.) with mime type and URL
+
 function isImageFilePart(part: Part): part is FilePart {
   if (part.type !== "file") return false;
-  const filePart = part as FilePart;
-  return SUPPORTED_MIME_TYPES.has(filePart.mime?.toLowerCase() ?? "");
+  const mime = (part as FilePart).mime?.toLowerCase() ?? "";
+  return SUPPORTED_MIME_TYPES.has(mime);
 }
 
 function isTextPart(part: Part): part is TextPart {
   return part.type === "text";
 }
 
-function parseDataUrl(dataUrl: string): { mime: string; data: Buffer } | null {
+// Image Processing: URL Handlers
+//
+// Images can arrive via different URL schemes:
+// - file://  → Already on disk, just need the local path
+// - data:    → Base64-encoded, must decode and save to temp file
+// - http(s): → Remote URL, pass through for MCP tool to fetch directly
+
+function handleFileUrl(
+  url: string,
+  filePart: FilePart,
+  log: Logger,
+): SavedImage | null {
+  // Image is already saved locally; strip the file:// prefix to get the path
+  const localPath = url.replace("file://", "");
+  log(`Image already on disk: ${localPath}`);
+  return { path: localPath, mime: filePart.mime, partId: filePart.id };
+}
+
+function parseBase64DataUrl(
+  dataUrl: string,
+): { mime: string; data: Buffer } | null {
   const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
   if (!match) return null;
 
   try {
-    return {
-      mime: match[1],
-      data: Buffer.from(match[2], "base64"),
-    };
+    return { mime: match[1], data: Buffer.from(match[2], "base64") };
   } catch {
     return null;
   }
 }
 
-function getExtension(mime: string): string {
+async function handleDataUrl(
+  url: string,
+  filePart: FilePart,
+  log: Logger,
+): Promise<SavedImage | null> {
+  // Pasted clipboard images arrive as base64 data URLs.
+  // Decode and save to a temp file so the MCP tool can read it.
+  const parsed = parseBase64DataUrl(url);
+  if (!parsed) {
+    log(`Failed to parse data URL for part ${filePart.id}`);
+    return null;
+  }
+
+  try {
+    const savedPath = await saveImageToTemp(parsed.data, parsed.mime);
+    log(`Saved image to: ${savedPath}`);
+    return { path: savedPath, mime: parsed.mime, partId: filePart.id };
+  } catch (err) {
+    log(`Failed to save image: ${err}`);
+    return null;
+  }
+}
+
+function handleHttpUrl(
+  url: string,
+  filePart: FilePart,
+  log: Logger,
+): SavedImage {
+  // Remote URLs are passed directly to the MCP tool, which can fetch them itself.
+  // This avoids unnecessary network requests and disk I/O.
+  log(`Image is remote URL: ${url}`);
+  return { path: url, mime: filePart.mime, partId: filePart.id };
+}
+
+// Image Processing: File Operations
+
+function getExtensionForMime(mime: string): string {
   return MIME_TO_EXTENSION[mime.toLowerCase()] ?? "png";
 }
 
@@ -259,161 +321,187 @@ async function ensureTempDir(): Promise<string> {
 
 async function saveImageToTemp(data: Buffer, mime: string): Promise<string> {
   const tempDir = await ensureTempDir();
-  const ext = getExtension(mime);
-  const filename = `${randomUUID()}.${ext}`;
+  const filename = `${randomUUID()}.${getExtensionForMime(mime)}`;
   const filepath = join(tempDir, filename);
-
   await writeFile(filepath, data);
   return filepath;
 }
 
-function generateInjectionPrompt(
-  imagePaths: Array<{ path: string; mime: string }>,
-  userText: string,
-  toolName: string,
-): string {
-  if (imagePaths.length === 0) return userText;
+// Image Processing: Main Processor
 
-  const isSingle = imagePaths.length === 1;
-  const imageList = imagePaths
-    .map((img, idx) => `- Image ${idx + 1}: ${img.path}`)
-    .join("\n");
+async function processImagePart(
+  filePart: FilePart,
+  log: Logger,
+): Promise<SavedImage | null> {
+  const url = filePart.url;
 
-  return `The user has shared ${isSingle ? "an image" : `${imagePaths.length} images`}. The ${isSingle ? "image is" : "images are"} saved at:
-${imageList}
+  if (!url) {
+    log(`Skipping image part ${filePart.id}: no URL`);
+    return null;
+  }
 
-Use the \`${toolName}\` tool to analyze ${isSingle ? "this image" : "each image"}.
+  if (url.startsWith("file://")) {
+    return handleFileUrl(url, filePart, log);
+  }
 
-User's request: ${userText || "(analyze the image)"}`;
+  if (url.startsWith("data:")) {
+    return handleDataUrl(url, filePart, log);
+  }
+
+  if (url.startsWith("http://") || url.startsWith("https://")) {
+    return handleHttpUrl(url, filePart, log);
+  }
+
+  log(
+    `Unsupported URL scheme for part ${filePart.id}: ${url.substring(0, 50)}...`,
+  );
+  return null;
 }
 
-async function processMessageImages(
+async function extractImagesFromParts(
   parts: Part[],
-  log: (msg: string) => void,
-): Promise<Array<{ path: string; mime: string; partId: string }>> {
-  const savedImages: Array<{ path: string; mime: string; partId: string }> = [];
+  log: Logger,
+): Promise<SavedImage[]> {
+  const savedImages: SavedImage[] = [];
 
   for (const part of parts) {
     if (!isImageFilePart(part)) continue;
 
-    const filePart = part as FilePart;
-    const url = filePart.url;
-
-    if (!url) {
-      log(`Skipping image part ${filePart.id}: no URL`);
-      continue;
+    const result = await processImagePart(part as FilePart, log);
+    if (result) {
+      savedImages.push(result);
     }
-
-    if (url.startsWith("file://")) {
-      const localPath = url.replace("file://", "");
-      log(`Image already on disk: ${localPath}`);
-      savedImages.push({
-        path: localPath,
-        mime: filePart.mime,
-        partId: filePart.id,
-      });
-      continue;
-    }
-
-    if (url.startsWith("data:")) {
-      const parsed = parseDataUrl(url);
-      if (!parsed) {
-        log(`Failed to parse data URL for part ${filePart.id}`);
-        continue;
-      }
-
-      try {
-        const savedPath = await saveImageToTemp(parsed.data, parsed.mime);
-        log(`Saved image to: ${savedPath}`);
-        savedImages.push({
-          path: savedPath,
-          mime: parsed.mime,
-          partId: filePart.id,
-        });
-      } catch (err) {
-        log(`Failed to save image: ${err}`);
-      }
-      continue;
-    }
-
-    if (url.startsWith("http://") || url.startsWith("https://")) {
-      log(`Image is remote URL: ${url}`);
-      savedImages.push({
-        path: url,
-        mime: filePart.mime,
-        partId: filePart.id,
-      });
-      continue;
-    }
-
-    log(
-      `Unsupported URL scheme for part ${filePart.id}: ${url.substring(0, 50)}...`,
-    );
   }
 
   return savedImages;
 }
 
+// Prompt Generation
+//
+// Since the target model doesn't natively understand image attachments,
+// we replace them with text instructions that tell the model to use an
+// MCP tool (e.g., understand_image) with the file path or URL.
+// The user's original text is preserved as "User's request: ...".
+
+function generateInjectionPrompt(
+  images: SavedImage[],
+  userText: string,
+  toolName: string,
+): string {
+  if (images.length === 0) return userText;
+
+  const isSingle = images.length === 1;
+  const imageList = images
+    .map((img, idx) => `- Image ${idx + 1}: ${img.path}`)
+    .join("\n");
+
+  const imageCountText = isSingle ? "an image" : `${images.length} images`;
+  const imagePlural = isSingle ? "image is" : "images are";
+  const analyzeText = isSingle ? "this image" : "each image";
+
+  return `The user has shared ${imageCountText}. The ${imagePlural} saved at:
+${imageList}
+
+Use the \`${toolName}\` tool to analyze ${analyzeText}.
+
+User's request: ${userText || "(analyze the image)"}`;
+}
+
+// Message Transformation
+//
+// The transformation flow:
+// 1. Find the last user message (most recent request)
+// 2. Extract and save any images from its parts
+// 3. Remove the image parts (they can't be sent to the model)
+// 4. Replace/update the text part with injection instructions
+
+function findLastUserMessage(
+  messages: Array<{ info: Message; parts: Part[] }>,
+): { message: { info: Message; parts: Part[] }; index: number } | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].info.role === "user") {
+      return { message: messages[i], index: i };
+    }
+  }
+  return null;
+}
+
+function getModelFromMessage(message: {
+  info: Message;
+}): ModelInfo | undefined {
+  const info = message.info as { model?: ModelInfo };
+  return info.model;
+}
+
+function removeProcessedImageParts(
+  parts: Part[],
+  processedIds: Set<string>,
+): Part[] {
+  // Remove image parts that were successfully processed; they've been converted
+  // to file paths in the injection prompt and the model can't interpret raw images.
+  return parts.filter(
+    (part) => !(part.type === "file" && processedIds.has(part.id)),
+  );
+}
+
+function updateOrCreateTextPart(
+  message: { info: Message; parts: Part[] },
+  newText: string,
+): void {
+  const textPartIndex = message.parts.findIndex(isTextPart);
+
+  if (textPartIndex !== -1) {
+    (message.parts[textPartIndex] as TextPart).text = newText;
+  } else {
+    const newTextPart: TextPart = {
+      id: `transformed-${randomUUID()}`,
+      sessionID: message.info.sessionID,
+      messageID: message.info.id,
+      type: "text",
+      text: newText,
+      synthetic: true,
+    };
+    message.parts.unshift(newTextPart);
+  }
+}
+
+// Plugin Export
+
 export const MinimaxEasyVisionPlugin: Plugin = async (input) => {
   const { client, directory } = input;
 
-  const log = (msg: string) => {
+  const log: Logger = (msg) => {
     client.app
-      .log({
-        body: {
-          service: PLUGIN_NAME,
-          level: "info",
-          message: msg,
-        },
-      })
+      .log({ body: { service: PLUGIN_NAME, level: "info", message: msg } })
       .catch(() => {});
   };
 
   await loadPluginConfig(directory, log);
-
   log("Plugin initialized");
 
   return {
     "experimental.chat.messages.transform": async (_input, output) => {
       const { messages } = output;
 
-      let lastUserMessage: { info: Message; parts: Part[] } | undefined;
-      let lastUserIndex = -1;
+      const result = findLastUserMessage(messages);
+      if (!result) return;
 
-      for (let i = messages.length - 1; i >= 0; i--) {
-        if (messages[i].info.role === "user") {
-          lastUserMessage = messages[i];
-          lastUserIndex = i;
-          break;
-        }
-      }
+      const { message: lastUserMessage, index: lastUserIndex } = result;
 
-      if (!lastUserMessage) {
-        return;
-      }
-
-      const userInfo = lastUserMessage.info as {
-        model?: { providerID: string; modelID: string };
-      };
-
-      if (!shouldApplyVisionHook(userInfo.model)) {
-        return;
-      }
+      const model = getModelFromMessage(lastUserMessage);
+      if (!modelMatchesAnyPattern(model)) return;
 
       log("Model matched, checking for images...");
 
       const hasImages = lastUserMessage.parts.some(isImageFilePart);
-      if (!hasImages) {
-        return;
-      }
+      if (!hasImages) return;
 
       log("Found images in message, processing...");
 
-      const savedImages = await processMessageImages(
+      const savedImages = await extractImagesFromParts(
         lastUserMessage.parts,
         log,
       );
-
       if (savedImages.length === 0) {
         log("No images were successfully saved");
         return;
@@ -421,39 +509,22 @@ export const MinimaxEasyVisionPlugin: Plugin = async (input) => {
 
       log(`Saved ${savedImages.length} image(s), transforming message...`);
 
-      const existingTextPart = lastUserMessage.parts.find(isTextPart) as
-        | TextPart
-        | undefined;
+      const existingTextPart = lastUserMessage.parts.find(isTextPart);
       const userText = existingTextPart?.text ?? "";
 
       const transformedText = generateInjectionPrompt(
-        savedImages.map((img) => ({ path: img.path, mime: img.mime })),
+        savedImages,
         userText,
         getImageAnalysisTool(),
       );
 
-      const processedPartIds = new Set(savedImages.map((img) => img.partId));
-      lastUserMessage.parts = lastUserMessage.parts.filter(
-        (part) => !(part.type === "file" && processedPartIds.has(part.id)),
+      const processedIds = new Set(savedImages.map((img) => img.partId));
+      lastUserMessage.parts = removeProcessedImageParts(
+        lastUserMessage.parts,
+        processedIds,
       );
 
-      const textPartIndex = lastUserMessage.parts.findIndex(isTextPart);
-
-      if (textPartIndex !== -1) {
-        const textPart = lastUserMessage.parts[textPartIndex] as TextPart;
-        textPart.text = transformedText;
-      } else {
-        const newTextPart: TextPart = {
-          id: `transformed-${randomUUID()}`,
-          sessionID: lastUserMessage.info.sessionID,
-          messageID: lastUserMessage.info.id,
-          type: "text",
-          text: transformedText,
-          synthetic: true,
-        };
-        lastUserMessage.parts.unshift(newTextPart);
-      }
-
+      updateOrCreateTextPart(lastUserMessage, transformedText);
       messages[lastUserIndex] = lastUserMessage;
 
       log("Successfully injected image path instructions");
