@@ -112,7 +112,7 @@ If the config is missing or empty, it defaults to MiniMax-only behavior.
 
 ### Custom Image Analysis Tool
 
-By default, the plugin uses `mcp_minimax_understand_image` from the MiniMax Coding Plan MCP. You can configure a different MCP tool for image analysis:
+By default, the plugin uses the `mcp_minimax_understand_image` tool from the MiniMax Coding Plan MCP. You can configure a different tool for image analysis:
 
 ```json
 {
@@ -121,7 +121,9 @@ By default, the plugin uses `mcp_minimax_understand_image` from the MiniMax Codi
 }
 ```
 
-This allows you to use other MCP servers that provide image analysis capabilities, such as:
+> **Note:** The `imageAnalysisTool` value is the **tool name**, not the MCP server name. MCP servers expose one or more tools—for example, the MiniMax Coding Plan MCP server exposes the `mcp_minimax_understand_image` tool. When configuring a custom tool, use the exact tool name as it appears in OpenCode (typically prefixed with `mcp_<server>_`).
+
+This allows you to use tools from other MCP servers that provide image analysis capabilities, such as:
 
 * [openrouter-image-mcp](https://github.com/JonathanJude/openrouter-image-mcp) - Uses OpenRouter with GPT-4V, Claude, Gemini
 * [mcp-image-recognition](https://github.com/mario-andreschak/mcp-image-recognition) - Uses Anthropic/OpenAI Vision APIs
