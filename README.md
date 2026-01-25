@@ -35,7 +35,7 @@ This plugin automates the vision pipeline so you don't have to think about it.
 3. **Saves** them to a temporary local directory.
 4. **Injects** the necessary context for the model to invoke the `understand_image` tool with the correct path.
 
-**Result:** You just paste the image and ask your question. The plugin handles the rest.
+**Result:** You just paste the image and ask your question just like how you do with Claude or GPT models. The plugin handles the rest.
 
 ## Supported Models
 
