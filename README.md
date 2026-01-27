@@ -121,7 +121,12 @@ By default, the plugin uses the `mcp_minimax_understand_image` tool from the Min
 }
 ```
 
-> **Note:** The `imageAnalysisTool` value is the **tool name**, not the MCP server name. MCP servers expose one or more tools—for example, the MiniMax Coding Plan MCP server exposes the `mcp_minimax_understand_image` tool. When configuring a custom tool, use the exact tool name as it appears in OpenCode (typically prefixed with `mcp_<server>_`).
+> [!NOTE]
+> The `imageAnalysisTool` value is the **tool name**, not the MCP server name.
+>
+> MCP servers expose one or more tools—for example, the MiniMax Coding Plan MCP server exposes the
+> `mcp_minimax_understand_image` tool.
+
 
 This allows you to use tools from other MCP servers that provide image analysis capabilities, such as:
 
