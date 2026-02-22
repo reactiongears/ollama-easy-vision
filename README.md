@@ -6,6 +6,30 @@ Originally built for [MiniMax](https://www.minimax.io/) models, it can be config
 
 It restores the "paste and ask" workflow by automatically saving image assets and routing them through the [MiniMax Coding Plan MCP](https://github.com/MiniMax-AI/MiniMax-Coding-Plan-MCP)
 
+## Table of Contents
+
+* [Demo](#demo)
+* [The Problem](#the-problem)
+* [Prerequisites](#prerequisites)
+* [Installation](#installation)
+  * [Via npm](#via-npm)
+  * [From Local Source](#from-local-source)
+* [What This Plugin Does](#what-this-plugin-does)
+* [Supported Models](#supported-models)
+  * [Custom Model Configuration](#custom-model-configuration)
+    * [Locations (Priority Order)](#locations-priority-order)
+    * [Config Format](#config-format)
+    * [Pattern Syntax](#pattern-syntax)
+    * [Wildcard Rules](#wildcard-rules)
+    * [Configuration Examples](#configuration-examples)
+  * [Custom Image Analysis Tool](#custom-image-analysis-tool)
+* [Supported Image Formats](#supported-image-formats)
+* [Usage](#usage)
+  * [Example Interaction](#example-interaction)
+* [Development](#development)
+* [License](#license)
+* [References](#references)
+
 ## Demo
 
 See how it works:
@@ -23,6 +47,47 @@ These models expect the MiniMax Coding Plan MCP's `understand_image` tool, which
 * **Ignored images**: Pasted images are simply ignored by the model.
 * **Manual steps**: You have to save screenshots manually, find the path, and reference it in your prompt.
 * **Broken flow**: The "paste and ask" experience available with Claude or GPT models is lost.
+
+## Prerequisites
+
+The MiniMax Coding Plan MCP server must be configured in your `opencode.json`:
+
+```json
+{
+  "mcp": {
+    "MiniMax": {
+      "command": "uvx",
+      "args": ["minimax-coding-plan-mcp"],
+      "env": {
+        "MINIMAX_API_KEY": "your-api-key-here",
+        "MINIMAX_API_HOST": "https://api.minimax.io"
+      }
+    }
+  }
+}
+```
+
+## Installation
+
+### Via npm
+
+Just add the plugin to the `plugin` array in your `opencode.json` file:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": ["opencode-minimax-easy-vision"]
+}
+```
+
+### From Local Source
+
+1. Clone the repository.
+2. Build the plugin:
+   ```bash
+   npm install && npm run build
+   ```
+3. Copy the built `dist/index.js` into your OpenCode plugin directory.
 
 ## What This Plugin Does
 
@@ -143,47 +208,6 @@ The plugin will instruct the model to use the configured tool. The tool should a
 * WebP
 
 *(Limited by the [MiniMax Coding Plan MCP](https://github.com/MiniMax-AI/MiniMax-Coding-Plan-MCP) `understand_image` tool.)*
-
-## Installation
-
-### Via npm
-
-Just add the plugin to the `plugin` array in your `opencode.json` file:
-
-```json
-{
-  "$schema": "https://opencode.ai/config.json",
-  "plugin": ["opencode-minimax-easy-vision"]
-}
-```
-
-### From Local Source
-
-1. Clone the repository.
-2. Build the plugin:
-   ```bash
-   npm install && npm run build
-   ```
-3. Copy the built `dist/index.js` into your OpenCode plugin directory.
-
-## Prerequisites
-
-The MiniMax Coding Plan MCP server must be configured in your `opencode.json`:
-
-```json
-{
-  "mcp": {
-    "MiniMax": {
-      "command": "uvx",
-      "args": ["minimax-coding-plan-mcp"],
-      "env": {
-        "MINIMAX_API_KEY": "your-api-key-here",
-        "MINIMAX_API_HOST": "https://api.minimax.io"
-      }
-    }
-  }
-}
-```
 
 ## Usage
 
