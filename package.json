@@ -20,8 +20,8 @@
     "mcp",
     "image"
   ],
-  "author": "",
-  "license": "MIT",
+  "author": "devadathanmb",
+  "license": "AGPL-3.0",
   "devDependencies": {
     "@opencode-ai/plugin": "^1.1.25",
     "@types/node": "^22.0.0",
