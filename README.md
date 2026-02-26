@@ -12,8 +12,6 @@ It restores the "paste and ask" workflow by automatically saving image assets an
 * [The Problem](#the-problem)
 * [Prerequisites](#prerequisites)
 * [Installation](#installation)
-  * [Via npm](#via-npm)
-  * [From Local Source](#from-local-source)
 * [What This Plugin Does](#what-this-plugin-does)
 * [Supported Models](#supported-models)
   * [Custom Model Configuration](#custom-model-configuration)
@@ -69,9 +67,7 @@ The MiniMax Coding Plan MCP server must be configured in your `opencode.json`:
 
 ## Installation
 
-### Via npm
-
-Just add the plugin to the `plugin` array in your `opencode.json` file:
+Add the plugin to the `plugin` array in your `opencode.json` file:
 
 ```json
 {
@@ -79,15 +75,6 @@ Just add the plugin to the `plugin` array in your `opencode.json` file:
   "plugin": ["opencode-minimax-easy-vision"]
 }
 ```
-
-### From Local Source
-
-1. Clone the repository.
-2. Build the plugin:
-   ```bash
-   npm install && npm run build
-   ```
-3. Copy the built `dist/index.js` into your OpenCode plugin directory.
 
 ## What This Plugin Does
 
@@ -226,12 +213,17 @@ The plugin will instruct the model to use the configured tool. The tool should a
 
 ## Development
 
-```bash
-npm install
-npm run build
-```
-
-The built plugin will be available at `dist/index.js`
+1. Install dependencies and build:
+   ```bash
+   npm install
+   npm run build
+   ```
+2. The built plugin will be available at `dist/index.js`.
+3. Symlink it into the global plugin directory and restart OpenCode to pick up changes:
+   ```bash
+   mkdir -p ~/.config/opencode/plugin
+   ln -sf $(pwd)/dist/index.js ~/.config/opencode/plugin/minimax-easy-vision.js
+   ```
 
 ## License
 
