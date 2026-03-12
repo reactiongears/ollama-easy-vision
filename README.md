@@ -1,238 +1,152 @@
-# Opencode MiniMax Easy Vision
+# Ollama Easy Vision
 
-MiniMax Easy Vision is a plugin for [OpenCode](https://opencode.ai) that enables **vision support** for models that lack native image attachment support.
+An [OpenCode](https://opencode.ai) plugin that adds **vision support** to any Ollama model by routing pasted images through a local vision model via MCP.
 
-Originally built for [MiniMax](https://www.minimax.io/) models, it can be configured to work with any model that requires MCP-based image handling.
-
-It restores the "paste and ask" workflow by automatically saving image assets and routing them through the [MiniMax Coding Plan MCP](https://github.com/MiniMax-AI/MiniMax-Coding-Plan-MCP)
-
-## Table of Contents
-
-* [Demo](#demo)
-* [The Problem](#the-problem)
-* [Prerequisites](#prerequisites)
-* [Installation](#installation)
-* [What This Plugin Does](#what-this-plugin-does)
-* [Supported Models](#supported-models)
-  * [Custom Model Configuration](#custom-model-configuration)
-    * [Locations (Priority Order)](#locations-priority-order)
-    * [Config Format](#config-format)
-    * [Pattern Syntax](#pattern-syntax)
-    * [Wildcard Rules](#wildcard-rules)
-    * [Configuration Examples](#configuration-examples)
-  * [Custom Image Analysis Tool](#custom-image-analysis-tool)
-* [Supported Image Formats](#supported-image-formats)
-* [Usage](#usage)
-  * [Example Interaction](#example-interaction)
-* [Development](#development)
-* [License](#license)
-* [References](#references)
-
-## Demo
-
-See how it works:
-
-https://github.com/user-attachments/assets/df396c6c-6fa8-46b8-8984-c003ecf1c12c
-
-https://github.com/user-attachments/assets/826f90ea-913f-427e-ace8-0b711302c497
+Forked from [opencode-minimax-easy-vision](https://github.com/devadathanmb/opencode-minimax-easy-vision) and adapted for Ollama + [vision-mcp](https://github.com/arealicehole/vision-mcp).
 
 ## The Problem
 
-When using MiniMax models (like MiniMax M2.1) in OpenCode, native image attachments aren't supported. 
+Local coding models (Qwen3-Coder-Next, DeepSeek, Llama, etc.) can't see images. When you paste a screenshot, it's silently ignored. You lose the "paste and ask" workflow that Claude and GPT provide natively.
 
-These models expect the MiniMax Coding Plan MCP's `understand_image` tool, which requires an explicit file path. This breaks the normal flow:
+## The Solution
 
-* **Ignored images**: Pasted images are simply ignored by the model.
-* **Manual steps**: You have to save screenshots manually, find the path, and reference it in your prompt.
-* **Broken flow**: The "paste and ask" experience available with Claude or GPT models is lost.
+This plugin intercepts pasted images, saves them to disk, and injects instructions for the model to call a vision MCP tool. A separate vision model (like Qwen3-VL) analyzes the image and returns a text description that the coding model can act on.
+
+```
+You paste screenshot + "build this login page"
+    ↓
+[plugin] saves image, rewrites prompt
+    ↓
+[Qwen3-Coder-Next] calls vision.describe tool
+    ↓
+[vision-mcp] → [Qwen3-VL via Ollama] → text description
+    ↓
+[Qwen3-Coder-Next] writes the code
+```
+
+All local. No cloud APIs. Unlimited usage.
 
 ## Prerequisites
 
-The MiniMax Coding Plan MCP server must be configured in your `opencode.json`:
+1. **Ollama** running with a vision model pulled:
+   ```bash
+   ollama pull qwen3-vl:8b
+   ```
 
-```json
-{
-  "mcp": {
-    "MiniMax": {
-      "command": "uvx",
-      "args": ["minimax-coding-plan-mcp"],
-      "env": {
-        "MINIMAX_API_KEY": "your-api-key-here",
-        "MINIMAX_API_HOST": "https://api.minimax.io"
-      }
-    }
-  }
-}
-```
+2. **vision-mcp** server configured in your `opencode.json`:
+   ```json
+   {
+     "mcp": {
+       "vision": {
+         "type": "local",
+         "command": ["node", "/path/to/vision-mcp/vision-mcp.mjs"],
+         "env": {
+           "VISION_MODEL": "qwen3-vl:8b"
+         },
+         "enabled": true
+       }
+     }
+   }
+   ```
 
 ## Installation
 
-Add the plugin to the `plugin` array in your `opencode.json` file:
+Add the plugin to your `opencode.json`:
 
 ```json
 {
-  "$schema": "https://opencode.ai/config.json",
-  "plugin": ["opencode-minimax-easy-vision"]
+  "plugin": ["opencode-ollama-easy-vision"]
 }
 ```
 
-## What This Plugin Does
-
-This plugin automates the vision pipeline so you don't have to think about it.
-
-**How it works:**
-
-1. **Detects** when a configured model is active.
-2. **Intercepts** images pasted into the chat.
-3. **Saves** them to a temporary local directory.
-4. **Injects** the necessary context for the model to invoke the `understand_image` tool with the correct path.
-
-**Result:** You just paste the image and ask your question just like how you do with Claude or GPT models. The plugin handles the rest.
-
 ## Supported Models
 
-By default, the plugin activates for MiniMax models:
+By default, the plugin activates for common Ollama model patterns:
 
-* **Provider ID** containing `minimax`
-* **Model ID** containing `minimax` or `abab`
-
-**Examples:**
-* `minimax/minimax-m2.1`
-* `minimax/abab6.5s-chat`
+- `ollama/*` — All Ollama-provided models
+- `*qwen*` — Qwen models
+- `*kimi*` — Kimi models
+- `*llama*` — Llama models
+- `*deepseek*` — DeepSeek models
+- `*codestral*` — Codestral models
 
 ### Custom Model Configuration
 
-You can enable this for other models by creating a config file.
+Create a config file to customize which models trigger the plugin:
 
 #### Locations (Priority Order)
 
-1. **Project level**: `.opencode/opencode-minimax-easy-vision.json`
-2. **User level**: `~/.config/opencode/opencode-minimax-easy-vision.json`
+1. **Project level**: `.opencode/opencode-ollama-vision.json`
+2. **User level**: `~/.config/opencode/opencode-ollama-vision.json`
 
 #### Config Format
 
 ```json
 {
-  "models": ["minimax/*", "opencode/*", "*/glm-4.7-free"]
+  "models": ["ollama/*", "*/my-custom-model"],
+  "imageAnalysisTool": "mcp_vision_vision_describe"
 }
 ```
 
 #### Pattern Syntax
 
-| Pattern          | Matches                                 |
-| ---------------- | --------------------------------------- |
-| `*`              | Match ALL models                        |
-| `minimax/*`      | All models from the `minimax` provider  |
-| `*/glm-4.7-free` | Specific model from any provider        |
-| `opencode/*`     | All models from the `opencode` provider |
-| `*/abab*`        | Any model containing `abab`             |
-
-#### Wildcard Rules
-
-* `*suffix` matches values ending with `suffix`
-* `prefix*` matches values starting with `prefix`
-* `*` matches everything
-* `*text*` matches values containing `text`
-
-If the config is missing or empty, it defaults to MiniMax-only behavior.
-
-#### Configuration Examples
-
-**Enable for all models:**
-
-```json
-{
-  "models": ["*"]
-}
-```
-
-**Specific providers:**
-
-```json
-{
-  "models": ["minimax/*", "opencode/*", "google/*"]
-}
-```
-
-**Mix of providers and models:**
-
-```json
-{
-  "models": ["minimax/*", "opencode/gpt-5-nano", "*/claude-3-7-sonnet*"]
-}
-```
+| Pattern | Matches |
+|---------|---------|
+| `*` | ALL models |
+| `ollama/*` | All models from the `ollama` provider |
+| `*/qwen*` | Any model starting with `qwen` from any provider |
+| `*qwen*` | Any model or provider containing `qwen` |
 
 ### Custom Image Analysis Tool
 
-By default, the plugin uses the `mcp_minimax_understand_image` tool from the MiniMax Coding Plan MCP. You can configure a different tool for image analysis:
+The default tool is `mcp_vision_vision_describe` from [vision-mcp](https://github.com/arealicehole/vision-mcp). You can point to any MCP tool that accepts an image path:
 
 ```json
 {
-  "models": ["*"],
-  "imageAnalysisTool": "mcp_openrouter_analyze_image"
+  "imageAnalysisTool": "mcp_my_custom_vision_tool"
 }
 ```
 
-> [!NOTE]
-> The `imageAnalysisTool` value is the **tool name**, not the MCP server name.
->
-> MCP servers expose one or more tools—for example, the MiniMax Coding Plan MCP server exposes the
-> `mcp_minimax_understand_image` tool.
-
-
-This allows you to use tools from other MCP servers that provide image analysis capabilities, such as:
-
-* [openrouter-image-mcp](https://github.com/JonathanJude/openrouter-image-mcp) - Uses OpenRouter with GPT-4V, Claude, Gemini
-* [mcp-image-recognition](https://github.com/mario-andreschak/mcp-image-recognition) - Uses Anthropic/OpenAI Vision APIs
-* [Peekaboo](https://github.com/steipete/Peekaboo) - macOS screenshot + AI analysis
-
-The plugin will instruct the model to use the configured tool. The tool should accept an image file path as input.
-
 ## Supported Image Formats
 
-* PNG
-* JPEG
-* WebP
-
-*(Limited by the [MiniMax Coding Plan MCP](https://github.com/MiniMax-AI/MiniMax-Coding-Plan-MCP) `understand_image` tool.)*
+- PNG
+- JPEG
+- WebP
 
 ## Usage
 
-1. Select a supported model in OpenCode.
-2. Paste an image (`Cmd+V` / `Ctrl+V`).
-3. Ask a question about it, just like how you do for other models with native vision support.
+1. Select an Ollama model in OpenCode.
+2. Paste an image (`Cmd+V`).
+3. Ask your question — the plugin handles the rest.
 
-### Example Interaction
+### Example
 
-> **You**: [pasted screenshot] Why is this failing?
+> **You**: [pasted screenshot] Why is this layout broken?
 >
-> **Model**: I'll check the image using the `understand_image` tool.
-> `[Calls mcp_minimax_understand_image path="/tmp/xyz.png"]`
-> 
-> **Model**: The error suggests a syntax error on line 12.
+> **Model**: I'll analyze the image using the vision tool.
+> `[Calls mcp_vision_vision_describe path="/tmp/xyz.png"]`
+>
+> **Model**: The flexbox container is missing `align-items: center`...
 
 ## Development
 
-1. Install dependencies and build:
-   ```bash
-   npm install
-   npm run build
-   ```
-2. The built plugin will be available at `dist/index.js`.
-3. Symlink it into the global plugin directory and restart OpenCode to pick up changes:
-   ```bash
-   mkdir -p ~/.config/opencode/plugin
-   ln -sf $(pwd)/dist/index.js ~/.config/opencode/plugin/minimax-easy-vision.js
-   ```
+```bash
+npm install
+npm run build
+```
+
+For local development, symlink the built plugin:
+
+```bash
+mkdir -p ~/.config/opencode/plugin
+ln -sf $(pwd)/dist/index.js ~/.config/opencode/plugin/ollama-easy-vision.js
+```
+
+## Credits
+
+- Original plugin by [@devadathanmb](https://github.com/devadathanmb)
+- Vision MCP server by [@arealicehole](https://github.com/arealicehole)
 
 ## License
 
-AGPL-3.0. See [LICENSE](./LICENSE)
-
-## References
-
-* [OpenCode Official Website](https://opencode.ai)
-* [OpenCode Plugins Documentation](https://opencode.ai/docs/plugins/)
-* [MiniMax Official Website](https://www.minimax.io/)
-* [MiniMax Coding Plan MCP Repository](https://github.com/MiniMax-AI/MiniMax-Coding-Plan-MCP)
-* [MiniMax API Documentation](https://platform.minimax.io/docs/guides/coding-plan-mcp-guide)
+AGPL-3.0. See [LICENSE](./LICENSE).

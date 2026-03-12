@@ -1,7 +1,7 @@
 {
-  "name": "opencode-minimax-easy-vision",
-  "version": "1.2.3",
-  "description": "OpenCode plugin that enables vision support for Minimax models by saving pasted images and injecting MCP tool instructions",
+  "name": "opencode-ollama-easy-vision",
+  "version": "0.1.0",
+  "description": "OpenCode plugin that enables vision support for Ollama models by saving pasted images and routing them through a local vision model via MCP",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "type": "module",
@@ -15,12 +15,14 @@
   "keywords": [
     "opencode",
     "opencode-plugin",
-    "minimax",
+    "ollama",
     "vision",
     "mcp",
-    "image"
+    "image",
+    "qwen",
+    "qwen3-vl"
   ],
-  "author": "devadathanmb",
+  "author": "reactiongears",
   "license": "AGPL-3.0",
   "devDependencies": {
     "@opencode-ai/plugin": "^1.1.25",
@@ -35,6 +37,6 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/devadathanmb/opencode-minimax-easy-vision"
+    "url": "https://github.com/reactiongears/ollama-easy-vision"
   }
 }

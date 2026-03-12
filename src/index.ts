@@ -8,13 +8,21 @@ import { randomUUID } from "node:crypto";
 
 // Constants
 
-const PLUGIN_NAME = "minimax-easy-vision";
-const CONFIG_FILENAME = "opencode-minimax-easy-vision.json";
-const TEMP_DIR_NAME = "opencode-minimax-vision";
+const PLUGIN_NAME = "ollama-easy-vision";
+const CONFIG_FILENAME = "opencode-ollama-vision.json";
+const TEMP_DIR_NAME = "opencode-ollama-vision";
 const MAX_TOOL_NAME_LENGTH = 256;
 
-const DEFAULT_MODEL_PATTERNS: readonly string[] = ["minimax/*", "*/abab*"];
-const DEFAULT_IMAGE_ANALYSIS_TOOL = "mcp_minimax_understand_image";
+// Default: match all Ollama models (provider "ollama") plus common model names
+const DEFAULT_MODEL_PATTERNS: readonly string[] = [
+  "ollama/*",
+  "*qwen*",
+  "*kimi*",
+  "*llama*",
+  "*deepseek*",
+  "*codestral*",
+];
+const DEFAULT_IMAGE_ANALYSIS_TOOL = "mcp_vision_vision_describe";
 
 const SUPPORTED_MIME_TYPES = new Set([
   "image/png",
@@ -380,7 +388,7 @@ async function extractImagesFromParts(
 //
 // Since the target model doesn't natively understand image attachments,
 // we replace them with text instructions that tell the model to use an
-// MCP tool (e.g., understand_image) with the file path or URL.
+// MCP tool (vision.describe via vision-mcp) with the file path or URL.
 // The user's original text is preserved as "User's request: ...".
 
 function generateInjectionPrompt(
@@ -467,7 +475,7 @@ function updateOrCreateTextPart(
 
 // Plugin Export
 
-export const MinimaxEasyVisionPlugin: Plugin = async (input) => {
+export const OllamaEasyVisionPlugin: Plugin = async (input) => {
   const { client, directory } = input;
 
   const log: Logger = (msg) => {
@@ -477,7 +485,7 @@ export const MinimaxEasyVisionPlugin: Plugin = async (input) => {
   };
 
   await loadPluginConfig(directory, log);
-  log("Plugin initialized");
+  log("Plugin initialized — routing images through local Ollama vision model");
 
   return {
     "experimental.chat.messages.transform": async (_input, output) => {
@@ -527,9 +535,9 @@ export const MinimaxEasyVisionPlugin: Plugin = async (input) => {
       updateOrCreateTextPart(lastUserMessage, transformedText);
       messages[lastUserIndex] = lastUserMessage;
 
-      log("Successfully injected image path instructions");
+      log("Successfully injected image analysis instructions");
     },
   };
 };
 
-export default MinimaxEasyVisionPlugin;
+export default OllamaEasyVisionPlugin;
