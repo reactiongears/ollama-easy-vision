@@ -5,13 +5,13 @@ import { join } from "node:path";
 import { mkdir, writeFile, readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import http from "node:http";
 
 // Constants
 
 const PLUGIN_NAME = "ollama-easy-vision";
 const CONFIG_FILENAME = "opencode-ollama-vision.json";
 const TEMP_DIR_NAME = "opencode-ollama-vision";
-const MAX_TOOL_NAME_LENGTH = 256;
 
 // Default: match all Ollama models (provider "ollama") plus common model names
 const DEFAULT_MODEL_PATTERNS: readonly string[] = [
@@ -22,7 +22,11 @@ const DEFAULT_MODEL_PATTERNS: readonly string[] = [
   "*deepseek*",
   "*codestral*",
 ];
-const DEFAULT_IMAGE_ANALYSIS_TOOL = "mcp_vision_vision_describe";
+
+const DEFAULT_OLLAMA_HOST = "127.0.0.1";
+const DEFAULT_OLLAMA_PORT = 11434;
+const DEFAULT_VISION_MODEL = "qwen3-vl:8b";
+const DEFAULT_MAX_TOKENS = 1024;
 
 const SUPPORTED_MIME_TYPES = new Set([
   "image/png",
@@ -42,11 +46,15 @@ const MIME_TO_EXTENSION: Record<string, string> = {
 
 interface PluginConfig {
   models?: string[];
-  imageAnalysisTool?: string;
+  visionModel?: string;
+  ollamaHost?: string;
+  ollamaPort?: number;
+  maxTokens?: number;
 }
 
 interface SavedImage {
   path: string;
+  base64: string;
   mime: string;
   partId: string;
 }
@@ -80,10 +88,13 @@ function parseModelsArray(value: unknown): string[] | undefined {
   return models.length > 0 ? models : undefined;
 }
 
-function parseImageAnalysisTool(value: unknown): string | undefined {
-  if (typeof value !== "string") return undefined;
-  if (value.trim() === "") return undefined;
-  if (value.length > MAX_TOOL_NAME_LENGTH) return undefined;
+function parseString(value: unknown): string | undefined {
+  if (typeof value !== "string" || value.trim() === "") return undefined;
+  return value;
+}
+
+function parseNumber(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
   return value;
 }
 
@@ -93,7 +104,10 @@ function parseConfigObject(raw: unknown): PluginConfig {
   const obj = raw as Record<string, unknown>;
   return {
     models: parseModelsArray(obj.models),
-    imageAnalysisTool: parseImageAnalysisTool(obj.imageAnalysisTool),
+    visionModel: parseString(obj.visionModel),
+    ollamaHost: parseString(obj.ollamaHost),
+    ollamaPort: parseNumber(obj.ollamaPort),
+    maxTokens: parseNumber(obj.maxTokens),
   };
 }
 
@@ -131,37 +145,42 @@ async function loadPluginConfig(directory: string, log: Logger): Promise<void> {
   const userConfig = await readConfigFile(getUserConfigPath());
   const projectConfig = await readConfigFile(getProjectConfigPath(directory));
 
-  // Resolve models with precedence
   const modelsResult = selectWithPrecedence(
     projectConfig?.models,
     userConfig?.models,
     undefined,
   );
   if (modelsResult.source !== "default") {
-    log(
-      `Loaded models from ${modelsResult.source} config: ${modelsResult.value!.join(", ")}`,
-    );
+    log(`Loaded models from ${modelsResult.source} config: ${modelsResult.value!.join(", ")}`);
   } else {
     log(`Using default models: ${DEFAULT_MODEL_PATTERNS.join(", ")}`);
   }
 
-  // Resolve imageAnalysisTool with precedence
-  const toolResult = selectWithPrecedence(
-    projectConfig?.imageAnalysisTool,
-    userConfig?.imageAnalysisTool,
-    undefined,
+  const visionResult = selectWithPrecedence(
+    projectConfig?.visionModel,
+    userConfig?.visionModel,
+    DEFAULT_VISION_MODEL,
   );
-  if (toolResult.source !== "default") {
-    log(
-      `Using imageAnalysisTool from ${toolResult.source} config: ${toolResult.value}`,
-    );
-  } else {
-    log(`Using default imageAnalysisTool: ${DEFAULT_IMAGE_ANALYSIS_TOOL}`);
-  }
+  log(`Vision model: ${visionResult.value} (${visionResult.source})`);
 
   pluginConfig = {
     models: modelsResult.value,
-    imageAnalysisTool: toolResult.value,
+    visionModel: visionResult.value,
+    ollamaHost: selectWithPrecedence(
+      projectConfig?.ollamaHost,
+      userConfig?.ollamaHost,
+      DEFAULT_OLLAMA_HOST,
+    ).value,
+    ollamaPort: selectWithPrecedence(
+      projectConfig?.ollamaPort,
+      userConfig?.ollamaPort,
+      DEFAULT_OLLAMA_PORT,
+    ).value,
+    maxTokens: selectWithPrecedence(
+      projectConfig?.maxTokens,
+      userConfig?.maxTokens,
+      DEFAULT_MAX_TOKENS,
+    ).value,
   };
 }
 
@@ -171,8 +190,80 @@ function getConfiguredModels(): readonly string[] {
   return pluginConfig.models ?? DEFAULT_MODEL_PATTERNS;
 }
 
-function getImageAnalysisTool(): string {
-  return pluginConfig.imageAnalysisTool ?? DEFAULT_IMAGE_ANALYSIS_TOOL;
+function getVisionModel(): string {
+  return pluginConfig.visionModel ?? DEFAULT_VISION_MODEL;
+}
+
+function getOllamaHost(): string {
+  return pluginConfig.ollamaHost ?? DEFAULT_OLLAMA_HOST;
+}
+
+function getOllamaPort(): number {
+  return pluginConfig.ollamaPort ?? DEFAULT_OLLAMA_PORT;
+}
+
+function getMaxTokens(): number {
+  return pluginConfig.maxTokens ?? DEFAULT_MAX_TOKENS;
+}
+
+// Ollama Vision API
+
+function postJSON(path: string, body: unknown): Promise<{ status: number; body: string }> {
+  const data = JSON.stringify(body);
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      {
+        host: getOllamaHost(),
+        port: getOllamaPort(),
+        path,
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(data),
+        },
+      },
+      (res) => {
+        let buf = "";
+        res.on("data", (chunk: Buffer) => (buf += chunk.toString()));
+        res.on("end", () => resolve({ status: res.statusCode ?? 500, body: buf }));
+      },
+    );
+    req.on("error", reject);
+    req.write(data);
+    req.end();
+  });
+}
+
+async function analyzeImageWithOllama(
+  imageBase64: string,
+  userPrompt: string,
+  log: Logger,
+): Promise<string> {
+  const model = getVisionModel();
+  const prompt = userPrompt
+    ? `Analyze this image in the context of the following request. Be detailed about visual elements, layout, colors, text, and any code or errors visible.\n\nUser's request: ${userPrompt}`
+    : "Describe this image in detail. Include layout, visual elements, colors, text content, any code or errors visible, and UI components.";
+
+  log(`Calling Ollama vision model: ${model}`);
+
+  const { status, body } = await postJSON("/api/generate", {
+    model,
+    prompt,
+    images: [imageBase64],
+    stream: false,
+    options: {
+      num_predict: getMaxTokens(),
+      temperature: 0.1,
+    },
+  });
+
+  if (status !== 200) {
+    log(`Ollama vision error ${status}: ${body}`);
+    throw new Error(`Ollama vision API error: ${status}`);
+  }
+
+  const parsed = JSON.parse(body) as { response?: string };
+  return parsed.response ?? "";
 }
 
 // Pattern Matching (supports wildcards: *, prefix*, *suffix, *contains*)
@@ -181,35 +272,28 @@ function matchesWildcardPattern(pattern: string, value: string): boolean {
   const p = pattern.toLowerCase();
   const v = value.toLowerCase();
 
-  // Global wildcard
   if (p === "*") return true;
 
-  // Contains: *text*
   if (p.startsWith("*") && p.endsWith("*") && p.length > 2) {
     return v.includes(p.slice(1, -1));
   }
 
-  // Prefix: text*
   if (p.endsWith("*")) {
     return v.startsWith(p.slice(0, -1));
   }
 
-  // Suffix: *text
   if (p.startsWith("*")) {
     return v.endsWith(p.slice(1));
   }
 
-  // Exact match
   return v === p;
 }
 
 function matchesSinglePattern(pattern: string, model: ModelInfo): boolean {
-  // Global wildcard matches everything
   if (pattern === "*") return true;
 
   const slashIndex = pattern.indexOf("/");
 
-  // No slash: match against both provider and model
   if (slashIndex === -1) {
     return (
       matchesWildcardPattern(pattern, model.modelID) ||
@@ -217,7 +301,6 @@ function matchesSinglePattern(pattern: string, model: ModelInfo): boolean {
     );
   }
 
-  // With slash: match provider/model separately
   const providerPattern = pattern.slice(0, slashIndex);
   const modelPattern = pattern.slice(slashIndex + 1);
 
@@ -235,10 +318,6 @@ function modelMatchesAnyPattern(model: ModelInfo | undefined): boolean {
 }
 
 // Type Guards
-//
-// Messages in OpenCode contain "parts" - an array of different content types:
-// - TextPart: The user's typed text
-// - FilePart: Attached files (images, PDFs, etc.) with mime type and URL
 
 function isImageFilePart(part: Part): part is FilePart {
   if (part.type !== "file") return false;
@@ -251,18 +330,12 @@ function isTextPart(part: Part): part is TextPart {
 }
 
 // Image Processing: URL Handlers
-//
-// Images can arrive via different URL schemes:
-// - file://  → Already on disk, just need the local path
-// - data:    → Base64-encoded, must decode and save to temp file
-// - http(s): → Remote URL, pass through for MCP tool to fetch directly
 
 function handleFileUrl(
   url: string,
   filePart: FilePart,
   log: Logger,
-): SavedImage | null {
-  // Image is already saved locally; strip the file:// prefix to get the path
+): { path: string; mime: string; partId: string } | null {
   const localPath = url.replace("file://", "");
   log(`Image already on disk: ${localPath}`);
   return { path: localPath, mime: filePart.mime, partId: filePart.id };
@@ -270,12 +343,16 @@ function handleFileUrl(
 
 function parseBase64DataUrl(
   dataUrl: string,
-): { mime: string; data: Buffer } | null {
+): { mime: string; data: Buffer; base64: string } | null {
   const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
   if (!match) return null;
 
   try {
-    return { mime: match[1], data: Buffer.from(match[2], "base64") };
+    return {
+      mime: match[1],
+      data: Buffer.from(match[2], "base64"),
+      base64: match[2],
+    };
   } catch {
     return null;
   }
@@ -286,8 +363,6 @@ async function handleDataUrl(
   filePart: FilePart,
   log: Logger,
 ): Promise<SavedImage | null> {
-  // Pasted clipboard images arrive as base64 data URLs.
-  // Decode and save to a temp file so the MCP tool can read it.
   const parsed = parseBase64DataUrl(url);
   if (!parsed) {
     log(`Failed to parse data URL for part ${filePart.id}`);
@@ -297,22 +372,16 @@ async function handleDataUrl(
   try {
     const savedPath = await saveImageToTemp(parsed.data, parsed.mime);
     log(`Saved image to: ${savedPath}`);
-    return { path: savedPath, mime: parsed.mime, partId: filePart.id };
+    return {
+      path: savedPath,
+      base64: parsed.base64,
+      mime: parsed.mime,
+      partId: filePart.id,
+    };
   } catch (err) {
     log(`Failed to save image: ${err}`);
     return null;
   }
-}
-
-function handleHttpUrl(
-  url: string,
-  filePart: FilePart,
-  log: Logger,
-): SavedImage {
-  // Remote URLs are passed directly to the MCP tool, which can fetch them itself.
-  // This avoids unnecessary network requests and disk I/O.
-  log(`Image is remote URL: ${url}`);
-  return { path: url, mime: filePart.mime, partId: filePart.id };
 }
 
 // Image Processing: File Operations
@@ -335,6 +404,11 @@ async function saveImageToTemp(data: Buffer, mime: string): Promise<string> {
   return filepath;
 }
 
+async function readFileAsBase64(filePath: string): Promise<string> {
+  const data = await readFile(filePath);
+  return data.toString("base64");
+}
+
 // Image Processing: Main Processor
 
 async function processImagePart(
@@ -349,20 +423,18 @@ async function processImagePart(
   }
 
   if (url.startsWith("file://")) {
-    return handleFileUrl(url, filePart, log);
+    const result = handleFileUrl(url, filePart, log);
+    if (!result) return null;
+    const base64 = await readFileAsBase64(result.path);
+    return { ...result, base64 };
   }
 
   if (url.startsWith("data:")) {
     return handleDataUrl(url, filePart, log);
   }
 
-  if (url.startsWith("http://") || url.startsWith("https://")) {
-    return handleHttpUrl(url, filePart, log);
-  }
-
-  log(
-    `Unsupported URL scheme for part ${filePart.id}: ${url.substring(0, 50)}...`,
-  );
+  // For http(s) URLs, we can't easily base64 encode — skip for now
+  log(`Skipping remote URL (vision requires local image): ${url.substring(0, 50)}`);
   return null;
 }
 
@@ -384,44 +456,7 @@ async function extractImagesFromParts(
   return savedImages;
 }
 
-// Prompt Generation
-//
-// Since the target model doesn't natively understand image attachments,
-// we replace them with text instructions that tell the model to use an
-// MCP tool (vision.describe via vision-mcp) with the file path or URL.
-// The user's original text is preserved as "User's request: ...".
-
-function generateInjectionPrompt(
-  images: SavedImage[],
-  userText: string,
-  toolName: string,
-): string {
-  if (images.length === 0) return userText;
-
-  const isSingle = images.length === 1;
-  const imageList = images
-    .map((img, idx) => `- Image ${idx + 1}: ${img.path}`)
-    .join("\n");
-
-  const imageCountText = isSingle ? "an image" : `${images.length} images`;
-  const imagePlural = isSingle ? "image is" : "images are";
-  const analyzeText = isSingle ? "this image" : "each image";
-
-  return `The user has shared ${imageCountText}. The ${imagePlural} saved at:
-${imageList}
-
-Use the \`${toolName}\` tool to analyze ${analyzeText}.
-
-User's request: ${userText || "(analyze the image)"}`;
-}
-
 // Message Transformation
-//
-// The transformation flow:
-// 1. Find the last user message (most recent request)
-// 2. Extract and save any images from its parts
-// 3. Remove the image parts (they can't be sent to the model)
-// 4. Replace/update the text part with injection instructions
 
 function findLastUserMessage(
   messages: Array<{ info: Message; parts: Part[] }>,
@@ -445,8 +480,6 @@ function removeProcessedImageParts(
   parts: Part[],
   processedIds: Set<string>,
 ): Part[] {
-  // Remove image parts that were successfully processed; they've been converted
-  // to file paths in the injection prompt and the model can't interpret raw images.
   return parts.filter(
     (part) => !(part.type === "file" && processedIds.has(part.id)),
   );
@@ -485,7 +518,7 @@ export const OllamaEasyVisionPlugin: Plugin = async (input) => {
   };
 
   await loadPluginConfig(directory, log);
-  log("Plugin initialized — routing images through local Ollama vision model");
+  log(`Plugin initialized — vision model: ${getVisionModel()}`);
 
   return {
     "experimental.chat.messages.transform": async (_input, output) => {
@@ -515,17 +548,45 @@ export const OllamaEasyVisionPlugin: Plugin = async (input) => {
         return;
       }
 
-      log(`Saved ${savedImages.length} image(s), transforming message...`);
+      log(`Processing ${savedImages.length} image(s) through ${getVisionModel()}...`);
 
+      // Get the user's original text to provide context for image analysis
       const existingTextPart = lastUserMessage.parts.find(isTextPart);
       const userText = existingTextPart?.text ?? "";
 
-      const transformedText = generateInjectionPrompt(
-        savedImages,
-        userText,
-        getImageAnalysisTool(),
-      );
+      // Analyze each image with the vision model
+      const descriptions: string[] = [];
+      for (let i = 0; i < savedImages.length; i++) {
+        const img = savedImages[i];
+        try {
+          log(`Analyzing image ${i + 1}/${savedImages.length}...`);
+          const description = await analyzeImageWithOllama(
+            img.base64,
+            userText,
+            log,
+          );
+          descriptions.push(description);
+          log(`Image ${i + 1} analyzed successfully`);
+        } catch (err) {
+          log(`Failed to analyze image ${i + 1}: ${err}`);
+          descriptions.push(`[Image analysis failed: ${err}]`);
+        }
+      }
 
+      // Build the transformed prompt with vision descriptions injected
+      const isSingle = savedImages.length === 1;
+      let transformedText: string;
+
+      if (isSingle) {
+        transformedText = `[Image Analysis — ${getVisionModel()}]\n${descriptions[0]}\n\n${userText || "(The user shared an image for analysis)"}`;
+      } else {
+        const imageDescriptions = descriptions
+          .map((desc, idx) => `### Image ${idx + 1}\n${desc}`)
+          .join("\n\n");
+        transformedText = `[Image Analysis — ${getVisionModel()}]\n${imageDescriptions}\n\n${userText || "(The user shared images for analysis)"}`;
+      }
+
+      // Remove image parts and replace with text
       const processedIds = new Set(savedImages.map((img) => img.partId));
       lastUserMessage.parts = removeProcessedImageParts(
         lastUserMessage.parts,
@@ -535,7 +596,7 @@ export const OllamaEasyVisionPlugin: Plugin = async (input) => {
       updateOrCreateTextPart(lastUserMessage, transformedText);
       messages[lastUserIndex] = lastUserMessage;
 
-      log("Successfully injected image analysis instructions");
+      log("Successfully injected vision analysis into message");
     },
   };
 };

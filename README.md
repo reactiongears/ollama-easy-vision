@@ -1,8 +1,8 @@
 # Ollama Easy Vision
 
-An [OpenCode](https://opencode.ai) plugin that adds **vision support** to any Ollama model by routing pasted images through a local vision model via MCP.
+An [OpenCode](https://opencode.ai) plugin that adds **vision support** to any Ollama model by routing pasted images through a local vision model — no cloud APIs, no MCP server, fully self-contained.
 
-Forked from [opencode-minimax-easy-vision](https://github.com/devadathanmb/opencode-minimax-easy-vision) and adapted for Ollama + [vision-mcp](https://github.com/arealicehole/vision-mcp).
+Forked from [opencode-minimax-easy-vision](https://github.com/devadathanmb/opencode-minimax-easy-vision) and adapted for Ollama.
 
 ## The Problem
 
@@ -10,44 +10,31 @@ Local coding models (Qwen3-Coder-Next, DeepSeek, Llama, etc.) can't see images. 
 
 ## The Solution
 
-This plugin intercepts pasted images, saves them to disk, and injects instructions for the model to call a vision MCP tool. A separate vision model (like Qwen3-VL) analyzes the image and returns a text description that the coding model can act on.
+This plugin intercepts pasted images and analyzes them directly via a local Ollama vision model (Qwen3-VL by default). The vision model's description is injected into the conversation as text — your coding model sees the description and acts on it.
 
 ```
 You paste screenshot + "build this login page"
     ↓
-[plugin] saves image, rewrites prompt
+[plugin] intercepts image, calls Ollama vision API
     ↓
-[Qwen3-Coder-Next] calls vision.describe tool
+[Qwen3-VL 8B] → "The image shows a login form with..."
     ↓
-[vision-mcp] → [Qwen3-VL via Ollama] → text description
+[plugin] injects description into message
     ↓
-[Qwen3-Coder-Next] writes the code
+[Qwen3-Coder-Next] reads description, writes code
 ```
 
-All local. No cloud APIs. Unlimited usage.
+All local. No cloud APIs. No extra MCP servers. Unlimited usage.
 
 ## Prerequisites
 
-1. **Ollama** running with a vision model pulled:
-   ```bash
-   ollama pull qwen3-vl:8b
-   ```
+**Ollama** running with a vision model pulled:
 
-2. **vision-mcp** server configured in your `opencode.json`:
-   ```json
-   {
-     "mcp": {
-       "vision": {
-         "type": "local",
-         "command": ["node", "/path/to/vision-mcp/vision-mcp.mjs"],
-         "env": {
-           "VISION_MODEL": "qwen3-vl:8b"
-         },
-         "enabled": true
-       }
-     }
-   }
-   ```
+```bash
+ollama pull qwen3-vl:8b
+```
+
+That's it. No MCP server configuration needed — the plugin calls Ollama directly.
 
 ## Installation
 
@@ -70,9 +57,9 @@ By default, the plugin activates for common Ollama model patterns:
 - `*deepseek*` — DeepSeek models
 - `*codestral*` — Codestral models
 
-### Custom Model Configuration
+### Custom Configuration
 
-Create a config file to customize which models trigger the plugin:
+Create a config file to customize behavior:
 
 #### Locations (Priority Order)
 
@@ -83,10 +70,21 @@ Create a config file to customize which models trigger the plugin:
 
 ```json
 {
-  "models": ["ollama/*", "*/my-custom-model"],
-  "imageAnalysisTool": "mcp_vision_vision_describe"
+  "models": ["ollama/*"],
+  "visionModel": "qwen3-vl:8b",
+  "ollamaHost": "127.0.0.1",
+  "ollamaPort": 11434,
+  "maxTokens": 1024
 }
 ```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `models` | See above | Model patterns that trigger the plugin |
+| `visionModel` | `qwen3-vl:8b` | Ollama vision model for image analysis |
+| `ollamaHost` | `127.0.0.1` | Ollama server host |
+| `ollamaPort` | `11434` | Ollama server port |
+| `maxTokens` | `1024` | Max tokens for vision model response |
 
 #### Pattern Syntax
 
@@ -97,14 +95,15 @@ Create a config file to customize which models trigger the plugin:
 | `*/qwen*` | Any model starting with `qwen` from any provider |
 | `*qwen*` | Any model or provider containing `qwen` |
 
-### Custom Image Analysis Tool
+### Alternative Vision Models
 
-The default tool is `mcp_vision_vision_describe` from [vision-mcp](https://github.com/arealicehole/vision-mcp). You can point to any MCP tool that accepts an image path:
+Any Ollama vision model works. Some options:
 
 ```json
-{
-  "imageAnalysisTool": "mcp_my_custom_vision_tool"
-}
+{ "visionModel": "qwen3-vl:8b" }
+{ "visionModel": "llava:7b" }
+{ "visionModel": "llava:13b" }
+{ "visionModel": "minicpm-v:8b" }
 ```
 
 ## Supported Image Formats
@@ -123,10 +122,17 @@ The default tool is `mcp_vision_vision_describe` from [vision-mcp](https://githu
 
 > **You**: [pasted screenshot] Why is this layout broken?
 >
-> **Model**: I'll analyze the image using the vision tool.
-> `[Calls mcp_vision_vision_describe path="/tmp/xyz.png"]`
+> *(plugin silently analyzes image via Qwen3-VL)*
 >
-> **Model**: The flexbox container is missing `align-items: center`...
+> **Model**: Based on the image analysis, the flexbox container is missing `align-items: center`...
+
+## How It Works
+
+1. **Intercepts** — hooks into OpenCode's `experimental.chat.messages.transform` middleware
+2. **Saves** — clipboard images are decoded from base64 and saved to `/tmp/opencode-ollama-vision/`
+3. **Analyzes** — calls Ollama's `/api/generate` endpoint with the vision model and base64 image
+4. **Injects** — replaces the image attachment with the vision model's text description
+5. **Transparent** — the coding model never sees raw image bytes, just a detailed description
 
 ## Development
 
@@ -144,8 +150,8 @@ ln -sf $(pwd)/dist/index.js ~/.config/opencode/plugin/ollama-easy-vision.js
 
 ## Credits
 
-- Original plugin by [@devadathanmb](https://github.com/devadathanmb)
-- Vision MCP server by [@arealicehole](https://github.com/arealicehole)
+- Original plugin architecture by [@devadathanmb](https://github.com/devadathanmb)
+- Adapted for Ollama by [@reactiongears](https://github.com/reactiongears)
 
 ## License
 
